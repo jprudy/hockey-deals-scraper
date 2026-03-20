@@ -1,0 +1,39 @@
+{
+  "artifacts": {
+    "normalized_csv": "C:\\Users\\joelp\\OneDrive\\Documents\\hockeydeals-v2\\automation\\output\\20260320T143542Z\\normalized\\deals_scraped_thehockeyshop.csv"
+  },
+  "ended_at": "2026-03-20T14:41:10+00:00",
+  "errors": [],
+  "importer": {
+    "log_file": "C:\\Users\\joelp\\OneDrive\\Documents\\hockeydeals-v2\\automation\\logs\\20260320T143542Z\\importer.log",
+    "return_code": 0,
+    "status": "success",
+    "summary": {
+      "errors": 0,
+      "inactivated": 0,
+      "inserted": 791,
+      "locked_seen_only": 0,
+      "rows_read": 791,
+      "run_id": "20260320T143542Z",
+      "stale_incremented": 0,
+      "updated_unlocked": 0
+    },
+    "summary_file": "C:\\Users\\joelp\\OneDrive\\Documents\\hockeydeals-v2\\automation\\logs\\20260320T143542Z\\summary.json"
+  },
+  "intake_jobs": {
+    "scraped:thehockeyshop": {
+      "log_file": "C:\\Users\\joelp\\OneDrive\\Documents\\hockeydeals-v2\\automation\\logs\\20260320T143542Z\\scraper_thehockeyshop.log",
+      "normalized_rows": 791,
+      "raw_csv_path": "C:\\Users\\joelp\\OneDrive\\Documents\\hockeydeals-v2\\automation\\output\\20260320T143542Z\\csv\\raw_thehockeyshop.csv",
+      "return_code": 0,
+      "status": "success",
+      "validation_errors": 0
+    }
+  },
+  "intake_types_used": [
+    "scraped"
+  ],
+  "run_id": "20260320T143542Z",
+  "started_at": "2026-03-20T14:35:42+00:00",
+  "status": "success"
+}

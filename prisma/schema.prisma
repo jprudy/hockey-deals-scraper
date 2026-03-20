@@ -1,0 +1,268 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum StockStatus {
+  IN_STOCK
+  OUT_OF_STOCK
+  PREORDER
+  UNKNOWN
+}
+
+enum DealStatus {
+  ACTIVE
+  EXPIRED
+  HIDDEN
+  DRAFT
+}
+
+enum SourceType {
+  CSV
+  SHEET
+  SCRAPER
+  MANUAL
+}
+
+enum PipelineRunStatus {
+  RUNNING
+  SUCCESS
+  PARTIAL_SUCCESS
+  FAILED
+}
+
+enum IntakeType {
+  SCRAPED
+  MANUAL
+  API
+}
+
+model Retailer {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  name        String   @unique
+  websiteUrl  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  deals Deal[]
+
+  @@index([name])
+}
+
+model Brand {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deals Deal[]
+
+  @@index([name])
+}
+
+model Category {
+  id           String         @id @default(cuid())
+  slug         String         @unique
+  name         String         @unique
+  description  String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  subcategories Subcategory[]
+  deals         Deal[]
+
+  @@index([name])
+}
+
+model Subcategory {
+  id         String   @id @default(cuid())
+  slug       String
+  name       String
+  categoryId String
+  category   Category @relation(fields: [categoryId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deals Deal[]
+
+  @@unique([categoryId, slug])
+  @@unique([categoryId, name])
+  @@index([categoryId])
+}
+
+model Deal {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  title     String
+
+  description String?
+  imageUrl    String?
+
+  // Prices are stored as integer cents for safer arithmetic and filtering.
+  originalPriceCents Int?
+  salePriceCents     Int?
+  currency            String  @default("CAD")
+
+  // discount may be computed from original/sale prices, but we keep it optional
+  // so the importer can store a parsed value from the spreadsheet when available.
+  discountPercent Int?
+
+  size          String?
+  stockStatus   StockStatus @default(UNKNOWN)
+
+  shippingText       String?
+  affiliateUrl      String? // DealURL in your sheet (typically affiliate/target link)
+  affiliateUrlWithUtm String? // final_link_utm (import-provided; can also be generated later)
+  retailerUrl       String? // LinkRetailer in your sheet
+
+  promotionStartAt DateTime?
+  promotionEndAt   DateTime?
+
+  // Spreadsheet "Date" is the time the deal was observed/imported by the scraper.
+  // We treat it as the deal's lastSeenAt and update it on re-import.
+  lastSeenAt DateTime @default(now())
+
+  isFeatured Boolean @default(false)
+
+  // Spreadsheet KEEP is an internal workflow flag.
+  keepFlag Boolean @default(false)
+
+  status DealStatus @default(ACTIVE)
+
+  externalId String? // Spreadsheet ID column (import-only; not stable across sources)
+
+  // Import/debug payload. Keep this flexible for future import variations.
+  rawData Json?
+
+  // Where this row came from. Used for import tracking and later audits.
+  sourceType SourceType @default(MANUAL)
+  // Keep nullable during rollout; make required once existing rows are backfilled.
+  sourceStore String?
+  sourceProductId String?
+  // Keep nullable during rollout; make required once existing rows are backfilled.
+  externalKey String? @unique
+  importSource String?
+  missedRuns Int @default(0)
+  firstSeenAt DateTime?
+  lastCheckedAt DateTime?
+  lastRunId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Taxonomy + source normalization (clean long-term schema).
+  retailerId    String?
+  retailer      Retailer?   @relation(fields: [retailerId], references: [id])
+
+  brandId       String?
+  brand         Brand?      @relation(fields: [brandId], references: [id])
+
+  categoryId    String?
+  category      Category?   @relation(fields: [categoryId], references: [id])
+
+  subcategoryId String?
+  subcategory   Subcategory? @relation(fields: [subcategoryId], references: [id])
+
+  @@index([retailerId])
+  @@index([brandId])
+  @@index([categoryId])
+  @@index([subcategoryId])
+  @@index([salePriceCents])
+  @@index([originalPriceCents])
+  @@index([stockStatus])
+  @@index([size])
+  @@index([isFeatured])
+  @@index([status])
+  @@index([lastSeenAt])
+  @@index([sourceStore, status])
+  @@index([externalKey])
+  @@index([missedRuns])
+  @@index([sourceType])
+}
+
+model PipelineRun {
+  id                 String             @id @default(cuid())
+  runId              String             @unique
+  status             PipelineRunStatus  @default(RUNNING)
+  startedAt          DateTime           @default(now())
+  endedAt            DateTime?
+  intakeTypesUsed    String[]           @default([])
+
+  scrapersTotal      Int                @default(0)
+  scrapersSucceeded  Int                @default(0)
+  scrapersFailed     Int                @default(0)
+  rowsScrapedTotal   Int                @default(0)
+  rowsImportedTotal  Int                @default(0)
+  insertedCount      Int                @default(0)
+  updatedCount       Int                @default(0)
+  lockedSkippedCount Int                @default(0)
+  staleExpiredCount  Int                @default(0)
+  errorCount         Int                @default(0)
+  errorSummary       Json?
+
+  intakeJobs         PipelineRunIntakeJob[]
+
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  @@index([status, startedAt])
+  @@index([startedAt])
+}
+
+model PipelineRunIntakeJob {
+  id             String            @id @default(cuid())
+  pipelineRunId  String
+  pipelineRun    PipelineRun       @relation(fields: [pipelineRunId], references: [id], onDelete: Cascade)
+
+  intakeType     IntakeType
+  sourceStore    String
+  status         PipelineRunStatus @default(RUNNING)
+  rowsProduced   Int               @default(0)
+  rowsAccepted   Int               @default(0)
+  outputPath     String?
+  logPath        String?
+  errorMessage   String?
+  anomalyZeroRows Boolean          @default(false)
+
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@unique([pipelineRunId, intakeType, sourceStore])
+  @@index([pipelineRunId])
+  @@index([intakeType, sourceStore, status])
+}
+
+model ManualImportBatch {
+  id           String            @id @default(cuid())
+  sourceType   SourceType        @default(CSV)
+  status       PipelineRunStatus @default(RUNNING)
+  uploadedBy   String?
+  fileName     String?
+  notes        String?
+
+  startedAt    DateTime          @default(now())
+  endedAt      DateTime?
+
+  rowsRead     Int               @default(0)
+  inserted     Int               @default(0)
+  updated      Int               @default(0)
+  skipped      Int               @default(0)
+  errors       Int               @default(0)
+
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([status, startedAt])
+}

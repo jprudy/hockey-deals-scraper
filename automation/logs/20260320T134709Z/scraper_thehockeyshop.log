@@ -1,0 +1,58 @@
+C:\Users\joelp\OneDrive\Documents\hockeydeals-v2\automation\scrapers\thehockeyshop\ths_extractor.py:12: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+  RUN_ID = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+[i] Output CSV: C:\Users\joelp\OneDrive\Documents\hockeydeals-v2\automation\output\20260320T134709Z\csv\raw_thehockeyshop.csv
+
+[+] Visiting: https://www.thehockeyshop.com/collections/hockey-deals-clearance
+    [LoadMore] starting with 65 unique products
+    [LoadMore] click 1: 65 -> 97
+    [LoadMore] click 2: 97 -> 129
+    [LoadMore] click 3: 129 -> 161
+    [LoadMore] click 4: 161 -> 193
+    [LoadMore] click 5: 193 -> 225
+    [LoadMore] click 6: 225 -> 257
+    [LoadMore] click 7: 257 -> 289
+    [LoadMore] click 8: 289 -> 321
+    [LoadMore] click 9: 321 -> 353
+    [LoadMore] click 10: 353 -> 385
+    [LoadMore] click 11: 385 -> 417
+    [LoadMore] click 12: 417 -> 449
+    [LoadMore] click 13: 449 -> 481
+    [LoadMore] click 14: 481 -> 513
+    [LoadMore] click 15: 513 -> 545
+    [LoadMore] click 16: 545 -> 577
+    [LoadMore] click 17: 577 -> 609
+    [LoadMore] click 18: 609 -> 641
+    [LoadMore] click 19: 641 -> 673
+    [LoadMore] click 20: 673 -> 705
+    [LoadMore] click 21: 705 -> 737
+    [LoadMore] click 22: 737 -> 769
+    [LoadMore] click 23: 769 -> 801
+    [LoadMore] click 24: 801 -> 833
+    [LoadMore] click 25: 833 -> 834
+    [LoadMore] no button & no growth; stopping.
+    [LoadMore] total unique products visible: 834
+    [Collect] unique product URLs: 834
+    [JSON] 100/834 | kept=89
+    [JSON] 200/834 | kept=185
+    [JSON] 300/834 | kept=279
+    [JSON] 400/834 | kept=377
+    [JSON] 500/834 | kept=470
+    [JSON] 600/834 | kept=566
+    [JSON] 700/834 | kept=663
+    [JSON] 800/834 | kept=758
+    [Result] kept=791 dropped_no_discount=42 dropped_no_json=1
+    Extracted 791 deals via JSON
+Traceback (most recent call last):
+  File "C:\Users\joelp\OneDrive\Documents\hockeydeals-v2\automation\scrapers\thehockeyshop\ths_extractor.py", line 612, in <module>
+    main()
+    ~~~~^^
+  File "C:\Users\joelp\OneDrive\Documents\hockeydeals-v2\automation\scrapers\thehockeyshop\ths_extractor.py", line 608, in main
+    write_rows(final_rows, FIELDS, out_path)
+    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\joelp\OneDrive\Documents\hockeydeals-v2\automation\scrapers\thehockeyshop\ths_extractor.py", line 544, in write_rows
+    print(f"[\u2713] Wrote {len(rows)} rows to {path.resolve()}")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\joelp\AppData\Local\Programs\Python\Python313\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2713' in position 1: character maps to <undefined>
