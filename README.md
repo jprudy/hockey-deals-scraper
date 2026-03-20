@@ -83,3 +83,24 @@ Quick checks:
 tail -f /root/hockeydeals-v2/automation/logs/cron.log
 crontab -l
 ```
+
+## Monitoring
+
+Minimal webhook-first monitoring is available for pipeline health checks.
+
+Checks:
+
+- failed latest run
+- zero-row scrape
+- large row drop vs previous successful run
+
+Required env vars on VPS:
+
+- `ALERT_WEBHOOK_URL` (Discord webhook URL)
+- `ALERT_ROW_DROP_THRESHOLD_PCT` (optional, default `50`)
+
+Manual health-check command:
+
+```bash
+cd /root/hockeydeals-v2 && /root/hockeydeals-v2/venv/bin/python automation/monitoring/check_pipeline_health.py
+```

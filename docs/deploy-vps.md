@@ -26,6 +26,9 @@ This runbook is the operational source for production deployment.
     - `0 */12 * * * cd /root/hockeydeals-v2 && /root/hockeydeals-v2/venv/bin/python automation/run_all.py >> automation/logs/cron.log 2>&1`
 12. Ensure scripts are executable:
     - `chmod +x /root/hockeydeals-v2/scripts/*.sh`
+13. Configure monitoring env vars in `/root/hockeydeals-v2/.env`:
+    - `ALERT_WEBHOOK_URL=...`
+    - `ALERT_ROW_DROP_THRESHOLD_PCT=50`
 
 ## Standard Update Workflow (After Push to GitHub)
 
@@ -81,16 +84,26 @@ Confirm cron entry:
 Expected entry:
 
 - `0 */12 * * * cd /root/hockeydeals-v2 && /root/hockeydeals-v2/venv/bin/python automation/run_all.py >> automation/logs/cron.log 2>&1`
+- Recommended with health checks:
+  - `0 */12 * * * cd /root/hockeydeals-v2 && /root/hockeydeals-v2/venv/bin/python automation/run_all.py >> automation/logs/cron.log 2>&1; cd /root/hockeydeals-v2 && bash scripts/check_pipeline_health.sh >> automation/logs/cron.log 2>&1`
 
 ## Log Verification
 
 Pipeline scheduler log:
 
 - `/root/hockeydeals-v2/automation/logs/cron.log`
+- Alert dedupe state:
+  - `/root/hockeydeals-v2/automation/logs/alerts_state.json`
 
 Live tail:
 
 - `tail -f /root/hockeydeals-v2/automation/logs/cron.log`
+
+## Monitoring Manual Test
+
+Run monitor script directly:
+
+- `cd /root/hockeydeals-v2 && /root/hockeydeals-v2/venv/bin/python automation/monitoring/check_pipeline_health.py`
 
 Per-run artifacts:
 
