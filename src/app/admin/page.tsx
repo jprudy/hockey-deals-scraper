@@ -10,7 +10,7 @@ export default async function AdminPage() {
       <header>
         <h1 className="text-2xl font-bold tracking-tight">Admin</h1>
         <p className="mt-2 text-sm text-black/70">
-          Phase 0 admin shell. Data is currently using mock deals.
+          Admin overview powered by live database data.
         </p>
         <div className="mt-3">
           <Link href="/admin/pipeline" className="text-sm text-blue-700 hover:underline">
@@ -20,7 +20,7 @@ export default async function AdminPage() {
       </header>
 
       <section className="mt-8 rounded-2xl border border-black/10 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-black/80">Deals (mock)</h2>
+        <h2 className="text-sm font-semibold text-black/80">Deals</h2>
         <div className="mt-4 overflow-auto">
           <table className="min-w-full text-left text-sm">
             <thead>

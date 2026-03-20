@@ -1,36 +1,85 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# HockeyDeals.ca (hockeydeals-v2)
 
-## Getting Started
+HockeyDeals is a Canadian hockey deal aggregation platform.
 
-First, run the development server:
+Current production model:
+
+- Cursor = local development only
+- GitHub = source of truth
+- VPS = only runtime environment
+- Neon = production database
+- cron = automation scheduler
+
+## Local Development (Cursor)
+
+Use local machine for coding and validation only.
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Python automation is developed locally but production execution is VPS-only.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Production Runtime (VPS)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Project path on VPS:
 
-## Learn More
+- `/root/hockeydeals-v2`
 
-To learn more about Next.js, take a look at the following resources:
+Pipeline entrypoint:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `/root/hockeydeals-v2/automation/run_all.py`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Python runtime:
 
-## Deploy on Vercel
+- `/root/hockeydeals-v2/venv/bin/python`
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Deploy / Update Workflow
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+After pushing code to GitHub `main`, deploy from VPS:
+
+```bash
+cd /root/hockeydeals-v2
+chmod +x /root/hockeydeals-v2/scripts/*.sh
+bash scripts/deploy_update.sh
+```
+
+The deploy script:
+
+- validates branch and clean working tree
+- pulls latest `main`
+- refreshes dependencies
+- runs `npx prisma generate`
+- ensures `automation/logs` exists
+- runs a safe smoke test
+
+Full runbook:
+
+- `docs/deploy-vps.md`
+
+## Cron Schedule
+
+Expected cron entry:
+
+```cron
+0 */12 * * * cd /root/hockeydeals-v2 && /root/hockeydeals-v2/venv/bin/python automation/run_all.py >> automation/logs/cron.log 2>&1
+```
+
+## Logs and Verification
+
+Main scheduler log:
+
+- `/root/hockeydeals-v2/automation/logs/cron.log`
+
+Per-run logs/artifacts:
+
+- `/root/hockeydeals-v2/automation/logs/<run_id>/`
+- `/root/hockeydeals-v2/automation/output/<run_id>/`
+
+Quick checks:
+
+```bash
+tail -f /root/hockeydeals-v2/automation/logs/cron.log
+crontab -l
+```
