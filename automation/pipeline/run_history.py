@@ -36,7 +36,7 @@ def _bridge(action: str, payload: Dict[str, Any]) -> None:
         raise RuntimeError(f"Pipeline run bridge failed ({action}): {stderr}")
 
 
-def start_run(run_id: str, started_at_iso: str) -> None:
+def start_run(run_id: str, started_at_iso: str, scrapers_total: int = 1) -> None:
     _bridge(
         "start_run",
         {
@@ -44,6 +44,7 @@ def start_run(run_id: str, started_at_iso: str) -> None:
             "startedAt": started_at_iso,
             "intakeType": "SCRAPED",
             "sourceStore": "thehockeyshop",
+            "scrapersTotal": scrapers_total,
         },
     )
 
@@ -56,13 +57,14 @@ def update_intake_job(
     log_path: Optional[str] = None,
     output_path: Optional[str] = None,
     error_message: Optional[str] = None,
+    source_store: str = "thehockeyshop",
 ) -> None:
     _bridge(
         "update_intake_job",
         {
             "runId": run_id,
             "intakeType": "SCRAPED",
-            "sourceStore": "thehockeyshop",
+            "sourceStore": source_store,
             "status": status,
             "rowsProduced": rows_produced,
             "rowsAccepted": rows_accepted,
@@ -85,6 +87,8 @@ def finalize_run(
     stale_expired_count: int,
     error_count: int,
     error_summary: Dict[str, Any],
+    scrapers_succeeded: Optional[int] = None,
+    scrapers_failed: Optional[int] = None,
 ) -> None:
     _bridge(
         "finalize_run",
@@ -100,5 +104,7 @@ def finalize_run(
             "staleExpiredCount": stale_expired_count,
             "errorCount": error_count,
             "errorSummary": error_summary,
+            "scrapersSucceeded": scrapers_succeeded,
+            "scrapersFailed": scrapers_failed,
         },
     )

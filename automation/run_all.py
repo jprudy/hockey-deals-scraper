@@ -1,24 +1,26 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
-import os
-import shlex
 import subprocess
 import sys
+import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from automation.pipeline.csv_writer import write_csv
+from automation.pipeline.dedupe import deduplicate_rows
 from automation.pipeline.manifest import init_manifest, write_json
 from automation.pipeline.run_history import finalize_run, start_run, update_intake_job
-from automation.pipeline.schema import IMPORT_SOURCE, SOURCE_STORE, validate_and_normalize_row
+from automation.pipeline.schema import IMPORT_SOURCE, validate_and_normalize_row
+from automation.scrapers.base import REQUIRED_SCRAPER_FIELDS, ScraperDefinition
+from automation.scrapers.sourceforsports.adapter import run as run_sourceforsports
+from automation.scrapers.thehockeyshop.adapter import run as run_thehockeyshop
 
 
 ROOT = Path(__file__).resolve().parent
@@ -41,64 +43,64 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_scraper(run_dir: Path, log_dir: Path, run_id: str) -> Dict[str, str]:
-    scraper_log_path = log_dir / "scraper_thehockeyshop.log"
-    raw_csv_path = run_dir / "csv" / "raw_thehockeyshop.csv"
-
-    env = os.environ.copy()
-    env["RUN_ID"] = run_id
-    env["OUTPUT_CSV_PATH"] = str(raw_csv_path)
-
-    command_override = env.get("THS_SCRAPER_COMMAND")
-    if command_override:
-        command = shlex.split(command_override, posix=(os.name != "nt"))
-    else:
-        command = [sys.executable, "automation/scrapers/thehockeyshop/scrape.py"]
-
-    with scraper_log_path.open("w", encoding="utf-8") as log_handle:
-        result = subprocess.run(
-            command,
-            cwd=ROOT.parent,
-            shell=False,
-            env=env,
-            stdout=log_handle,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-
-    return {
-        "status": "success" if result.returncode == 0 else "failed",
-        "return_code": result.returncode,
-        "log_file": str(scraper_log_path),
-        "raw_csv_path": str(raw_csv_path),
-    }
-
-
-def count_csv_rows(path: Path) -> int:
-    if not path.exists():
-        return 0
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.reader(handle)
-        # subtract header
-        return max(sum(1 for _ in reader) - 1, 0)
-
-
-def normalize_csv(raw_csv_path: Path, run_id: str, output_path: Path) -> Dict[str, int]:
-    rows: List[Dict[str, str]] = []
+def normalize_rows(rows: List[Dict[str, str]], run_id: str, output_path: Path) -> Dict[str, int]:
+    normalized_rows: List[Dict[str, str]] = []
     errors = 0
-    with raw_csv_path.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        for raw in reader:
-            # Phase 5A contract defaults for THS intake.
-            raw["import_source"] = raw.get("import_source") or IMPORT_SOURCE
-            raw["source_store"] = raw.get("source_store") or SOURCE_STORE
-            validated = validate_and_normalize_row(raw, run_id=run_id)
-            if validated.ok:
-                rows.append(validated.row)
-            else:
-                errors += 1
-    count = write_csv(output_path, rows)
+    for raw in rows:
+        raw["import_source"] = raw.get("import_source") or IMPORT_SOURCE
+        validated = validate_and_normalize_row(raw, run_id=run_id)
+        if validated.ok:
+            normalized_rows.append(validated.row)
+        else:
+            errors += 1
+    count = write_csv(output_path, normalized_rows)
     return {"normalized_rows": count, "validation_errors": errors}
+
+
+SCRAPERS: List[ScraperDefinition] = [
+    ScraperDefinition(name="thehockeyshop", run=run_thehockeyshop),
+    ScraperDefinition(name="sourceforsports", run=run_sourceforsports),
+]
+
+
+def sanitize_scraper_rows(rows: List[Dict[str, str]], scraper_name: str) -> Tuple[List[Dict[str, str]], int]:
+    valid: List[Dict[str, str]] = []
+    invalid_count = 0
+    required_non_empty = {"product_name", "price", "url", "source"}
+    for row in rows:
+        has_all_keys = all(field in row for field in REQUIRED_SCRAPER_FIELDS)
+        has_required_values = all(str(row.get(field, "")).strip() for field in required_non_empty)
+        if has_all_keys and has_required_values:
+            valid.append(row)
+        else:
+            invalid_count += 1
+    if invalid_count > 0:
+        log_event(f"warning scraper={scraper_name} dropped_invalid_rows={invalid_count}")
+    return valid, invalid_count
+
+
+def run_scraper_with_retry(scraper: ScraperDefinition, run_id: str, run_dir: Path, log_dir: Path) -> Tuple[List[Dict[str, str]], Dict[str, object]]:
+    attempts = 0
+    max_attempts = 2  # one retry max
+    last_meta: Dict[str, object] = {}
+    while attempts < max_attempts:
+        attempts += 1
+        started = time.perf_counter()
+        rows, meta = scraper.run(run_id, run_dir, log_dir)
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        meta["duration_ms"] = elapsed_ms
+        meta["attempt"] = attempts
+        last_meta = meta
+        if str(meta.get("status")) == "success":
+            cleaned_rows, invalid_rows = sanitize_scraper_rows(rows, scraper.name)
+            meta["invalid_rows"] = invalid_rows
+            meta["rows_scraped"] = len(cleaned_rows)
+            return cleaned_rows, meta
+        log_event(
+            f"warning scraper={scraper.name} attempt={attempts} status=failed "
+            f"return_code={meta.get('return_code')} duration_ms={elapsed_ms}"
+        )
+    return [], last_meta
 
 
 def run_importer(normalized_csv: Path, run_id: str, log_dir: Path) -> Dict[str, object]:
@@ -168,72 +170,70 @@ def main() -> int:
     manifest_path = run_dir / "manifest" / "run_manifest.json"
     errors: List[str] = []
 
-    start_run_ok = safe_run_history_call("start_run", start_run, run_id=run_id, started_at_iso=started_at)
+    start_run_ok = safe_run_history_call(
+        "start_run",
+        start_run,
+        run_id=run_id,
+        started_at_iso=started_at,
+        scrapers_total=len(SCRAPERS),
+    )
     if start_run_ok:
         log_event("pipeline_run record created")
     else:
         log_event("warning pipeline_run record not created")
 
-    scraper = run_scraper(run_dir=run_dir, log_dir=log_dir, run_id=run_id)
-    log_event(f"scraper completed status={scraper['status']} return_code={scraper['return_code']}")
-    manifest["intake_jobs"][f"{IMPORT_SOURCE}:{SOURCE_STORE}"] = scraper
+    all_rows: List[Dict[str, str]] = []
+    scraper_successes = 0
+    scraper_failures = 0
+    for scraper in SCRAPERS:
+        rows, meta = run_scraper_with_retry(scraper=scraper, run_id=run_id, run_dir=run_dir, log_dir=log_dir)
+        scraper_status = str(meta.get("status", "failed"))
+        source_store = str(meta.get("source", scraper.name))
+        log_event(
+            f"scraper={scraper.name} status={scraper_status} rows={len(rows)} "
+            f"duration_ms={int(meta.get('duration_ms', 0))} attempts={int(meta.get('attempt', 1))}"
+        )
+        if int(meta.get("rows_filtered", 0)) > 0:
+            log_event(f"warning scraper={scraper.name} rows_filtered={int(meta.get('rows_filtered', 0))}")
+        manifest["intake_jobs"][f"{IMPORT_SOURCE}:{source_store}"] = meta
+        if scraper_status == "success":
+            scraper_successes += 1
+            all_rows.extend(rows)
+        else:
+            scraper_failures += 1
+            errors.append(f"{scraper.name}_scraper_failed")
 
-    if scraper["status"] != "success":
-        raw_rows = count_csv_rows(Path(str(scraper["raw_csv_path"])))
         safe_run_history_call(
-            "update_intake_job_failed",
+            "update_intake_job",
             update_intake_job,
             run_id=run_id,
-            status="FAILED",
-            rows_produced=raw_rows,
-            rows_accepted=0,
-            log_path=str(scraper["log_file"]),
-            output_path=str(scraper["raw_csv_path"]),
-            error_message="scraper_failed",
+            status="SUCCESS" if scraper_status == "success" else "FAILED",
+            rows_produced=int(meta.get("rows_scraped", 0)),
+            rows_accepted=int(meta.get("rows_scraped", 0)) if scraper_status == "success" else 0,
+            log_path=str(meta.get("log_file", "")),
+            output_path=str(meta.get("raw_csv_path", "")),
+            error_message=None if scraper_status == "success" else "scraper_failed",
+            source_store=source_store,
         )
-        manifest["status"] = "failed"
-        manifest["errors"].append("thehockeyshop_scraper_failed")
-        errors.extend(manifest["errors"])
-        manifest["ended_at"] = utc_now().replace(microsecond=0).isoformat()
-        write_json(manifest_path, manifest)
-        safe_run_history_call(
-            "finalize_run_failed",
-            finalize_run,
-            run_id=run_id,
-            status="FAILED",
-            ended_at_iso=manifest["ended_at"],
-            rows_scraped_total=raw_rows,
-            rows_imported_total=0,
-            inserted_count=0,
-            updated_count=0,
-            locked_skipped_count=0,
-            stale_expired_count=0,
-            error_count=len(errors),
-            error_summary={"errors": errors},
-        )
-        log_event(f"end status=failed rows_read={raw_rows} inserted=0 updated=0 errors={len(errors)}")
-        return 1
 
-    raw_csv = Path(str(scraper["raw_csv_path"]))
-    raw_rows = count_csv_rows(raw_csv)
-    normalized_csv = run_dir / "normalized" / "deals_scraped_thehockeyshop.csv"
+    total_rows_before_dedupe = len(all_rows)
+    deduped_rows = deduplicate_rows(all_rows)
+    total_rows_after_dedupe = len(deduped_rows)
+    log_event(
+        f"dedupe completed rows_before={total_rows_before_dedupe} rows_after={total_rows_after_dedupe}"
+    )
+
+    if not deduped_rows:
+        log_event("warning all scrapers produced zero accepted rows")
+
+    normalized_csv = run_dir / "normalized" / "deals_scraped_all_sources.csv"
     normalized_csv.parent.mkdir(parents=True, exist_ok=True)
-    normalized_stats = normalize_csv(raw_csv_path=raw_csv, run_id=run_id, output_path=normalized_csv)
+    normalized_stats = normalize_rows(rows=deduped_rows, run_id=run_id, output_path=normalized_csv)
     log_event(
         "normalize completed "
-        f"raw_rows={raw_rows} normalized_rows={int(normalized_stats.get('normalized_rows', 0))} "
+        f"rows_before_dedupe={total_rows_before_dedupe} rows_after_dedupe={total_rows_after_dedupe} "
+        f"normalized_rows={int(normalized_stats.get('normalized_rows', 0))} "
         f"validation_errors={int(normalized_stats.get('validation_errors', 0))}"
-    )
-    manifest["intake_jobs"][f"{IMPORT_SOURCE}:{SOURCE_STORE}"].update(normalized_stats)
-    safe_run_history_call(
-        "update_intake_job_success",
-        update_intake_job,
-        run_id=run_id,
-        status="SUCCESS",
-        rows_produced=raw_rows,
-        rows_accepted=int(normalized_stats.get("normalized_rows", 0)),
-        log_path=str(scraper["log_file"]),
-        output_path=str(normalized_csv),
     )
     manifest["artifacts"]["normalized_csv"] = str(normalized_csv)
 
@@ -248,7 +248,7 @@ def main() -> int:
             run_id=run_id,
             status="SUCCESS",
             ended_at_iso=manifest["ended_at"],
-            rows_scraped_total=raw_rows,
+            rows_scraped_total=total_rows_before_dedupe,
             rows_imported_total=int(normalized_stats.get("normalized_rows", 0)),
             inserted_count=0,
             updated_count=0,
@@ -256,6 +256,8 @@ def main() -> int:
             stale_expired_count=0,
             error_count=0,
             error_summary={},
+            scrapers_succeeded=scraper_successes,
+            scrapers_failed=scraper_failures,
         )
         log_event(
             "end status=success(import_skipped) "
@@ -277,9 +279,15 @@ def main() -> int:
         "finalize_run_success_or_failed",
         finalize_run,
         run_id=run_id,
-        status="SUCCESS" if manifest["status"] == "success" else "FAILED",
+        status=(
+            "SUCCESS"
+            if manifest["status"] == "success" and scraper_failures == 0
+            else "PARTIAL_SUCCESS"
+            if manifest["status"] == "success" and scraper_failures > 0
+            else "FAILED"
+        ),
         ended_at_iso=manifest["ended_at"],
-        rows_scraped_total=raw_rows,
+        rows_scraped_total=total_rows_before_dedupe,
         rows_imported_total=int(importer_summary.get("rows_read", normalized_stats.get("normalized_rows", 0))),
         inserted_count=int(importer_summary.get("inserted", 0)),
         updated_count=int(importer_summary.get("updated_unlocked", 0)),
@@ -287,6 +295,8 @@ def main() -> int:
         stale_expired_count=int(importer_summary.get("inactivated", 0)),
         error_count=int(importer_summary.get("errors", 0)) + len(errors),
         error_summary={"errors": errors},
+        scrapers_succeeded=scraper_successes,
+        scrapers_failed=scraper_failures,
     )
     log_event(
         "end "

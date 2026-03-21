@@ -28,6 +28,7 @@ async function startRun(prisma: PrismaClient, payload: Payload): Promise<void> {
   const startedAt = payload.startedAt ? new Date(String(payload.startedAt)) : new Date();
   const intakeType = asIntakeType(payload.intakeType);
   const sourceStore = String(payload.sourceStore ?? "thehockeyshop");
+  const scrapersTotal = Number(payload.scrapersTotal ?? 1);
 
   await prisma.pipelineRun.upsert({
     where: { runId },
@@ -36,13 +37,13 @@ async function startRun(prisma: PrismaClient, payload: Payload): Promise<void> {
       status: "RUNNING" as any,
       startedAt,
       intakeTypesUsed: [intakeType.toLowerCase()],
-      scrapersTotal: 1,
+      scrapersTotal,
     },
     update: {
       status: "RUNNING" as any,
       startedAt,
       intakeTypesUsed: [intakeType.toLowerCase()],
-      scrapersTotal: 1,
+      scrapersTotal,
     },
   });
 
@@ -116,8 +117,8 @@ async function finalizeRun(prisma: PrismaClient, payload: Payload): Promise<void
     data: {
       status,
       endedAt,
-      scrapersSucceeded: status === "SUCCESS" ? 1 : 0,
-      scrapersFailed: status === "SUCCESS" ? 0 : 1,
+      scrapersSucceeded: Number(payload.scrapersSucceeded ?? (status === "SUCCESS" ? 1 : 0)),
+      scrapersFailed: Number(payload.scrapersFailed ?? (status === "SUCCESS" ? 0 : 1)),
       rowsScrapedTotal: Number(payload.rowsScrapedTotal ?? 0),
       rowsImportedTotal: Number(payload.rowsImportedTotal ?? 0),
       insertedCount: Number(payload.insertedCount ?? 0),

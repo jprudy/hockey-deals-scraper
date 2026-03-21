@@ -6,6 +6,7 @@ type Row = {
   run_id: string;
   scraped_at: string;
   import_source: string;
+  source?: string;
   external_key: string;
   source_store: string;
   source_url: string;
@@ -85,10 +86,13 @@ async function main(): Promise<number> {
 
   const seenKeys = new Set<string>();
   const importSourceScope = rows[0]?.import_source ?? "scraped";
+  const seenSourceStores = new Set<string>();
 
   try {
     for (const row of rows) {
       seenKeys.add(row.external_key);
+      const sourceStore = row.source || row.source_store;
+      seenSourceStores.add(sourceStore);
       const inStock = String(row.in_stock).toLowerCase() === "true";
       const stockStatus = inStock ? "IN_STOCK" : "OUT_OF_STOCK";
       const sourceType = toSourceType(row.import_source);
@@ -116,7 +120,7 @@ async function main(): Promise<number> {
             shippingText: row.stock_text || null,
             retailerUrl: row.source_url,
             externalKey: row.external_key,
-            sourceStore: row.source_store,
+            sourceStore,
             sourceProductId: row.source_product_id || null,
             importSource: row.import_source,
             sourceType: sourceType as any,
@@ -160,7 +164,7 @@ async function main(): Promise<number> {
           stockStatus: stockStatus as any,
           shippingText: row.stock_text || null,
           retailerUrl: row.source_url,
-          sourceStore: row.source_store,
+          sourceStore,
           sourceProductId: row.source_product_id || null,
           importSource: row.import_source,
           sourceType: sourceType as any,
@@ -176,7 +180,7 @@ async function main(): Promise<number> {
 
     const staleCandidates = await prisma.deal.findMany({
       where: {
-        sourceStore: "thehockeyshop",
+        sourceStore: { in: [...seenSourceStores] },
         importSource: importSourceScope,
         externalKey: { notIn: [...seenKeys] },
       },
