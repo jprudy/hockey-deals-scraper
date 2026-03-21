@@ -8,7 +8,7 @@ import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 if __package__ is None or __package__ == "":
     sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -20,6 +20,7 @@ from automation.pipeline.run_history import finalize_run, start_run, update_inta
 from automation.pipeline.schema import IMPORT_SOURCE, validate_and_normalize_row
 from automation.scrapers.base import REQUIRED_SCRAPER_FIELDS, ScraperDefinition
 from automation.scrapers.sourceforsports.adapter import run as run_sourceforsports
+from automation.scrapers.sportexcellence.adapter import run as run_sportexcellence
 from automation.scrapers.thehockeyshop.adapter import run as run_thehockeyshop
 
 
@@ -57,9 +58,38 @@ def normalize_rows(rows: List[Dict[str, str]], run_id: str, output_path: Path) -
     return {"normalized_rows": count, "validation_errors": errors}
 
 
+def count_rows_by_source(rows: List[Dict[str, str]]) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for row in rows:
+        source = str(row.get("source_store") or row.get("source") or "unknown").strip().lower() or "unknown"
+        counts[source] = counts.get(source, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def build_monitor_metrics(
+    rows_before_dedupe: int,
+    rows_after_dedupe: int,
+    normalized_rows: int,
+    source_before: Dict[str, int],
+    source_after: Dict[str, int],
+) -> Dict[str, Any]:
+    rows_removed = max(0, rows_before_dedupe - rows_after_dedupe)
+    dedupe_pct = round((rows_removed / rows_before_dedupe) * 100.0, 2) if rows_before_dedupe > 0 else 0.0
+    return {
+        "rows_before_dedupe": rows_before_dedupe,
+        "rows_after_dedupe": rows_after_dedupe,
+        "rows_removed_by_dedupe": rows_removed,
+        "dedupe_pct": dedupe_pct,
+        "normalized_rows": normalized_rows,
+        "per_source_before_dedupe": source_before,
+        "per_source_after_dedupe": source_after,
+    }
+
+
 SCRAPERS: List[ScraperDefinition] = [
     ScraperDefinition(name="thehockeyshop", run=run_thehockeyshop),
     ScraperDefinition(name="sourceforsports", run=run_sourceforsports),
+    ScraperDefinition(name="sportexcellence", run=run_sportexcellence),
 ]
 
 
@@ -217,8 +247,10 @@ def main() -> int:
         )
 
     total_rows_before_dedupe = len(all_rows)
+    per_source_before_dedupe = count_rows_by_source(all_rows)
     deduped_rows = deduplicate_rows(all_rows)
     total_rows_after_dedupe = len(deduped_rows)
+    per_source_after_dedupe = count_rows_by_source(deduped_rows)
     log_event(
         f"dedupe completed rows_before={total_rows_before_dedupe} rows_after={total_rows_after_dedupe}"
     )
@@ -229,6 +261,13 @@ def main() -> int:
     normalized_csv = run_dir / "normalized" / "deals_scraped_all_sources.csv"
     normalized_csv.parent.mkdir(parents=True, exist_ok=True)
     normalized_stats = normalize_rows(rows=deduped_rows, run_id=run_id, output_path=normalized_csv)
+    monitor_metrics = build_monitor_metrics(
+        rows_before_dedupe=total_rows_before_dedupe,
+        rows_after_dedupe=total_rows_after_dedupe,
+        normalized_rows=int(normalized_stats.get("normalized_rows", 0)),
+        source_before=per_source_before_dedupe,
+        source_after=per_source_after_dedupe,
+    )
     log_event(
         "normalize completed "
         f"rows_before_dedupe={total_rows_before_dedupe} rows_after_dedupe={total_rows_after_dedupe} "
@@ -236,6 +275,7 @@ def main() -> int:
         f"validation_errors={int(normalized_stats.get('validation_errors', 0))}"
     )
     manifest["artifacts"]["normalized_csv"] = str(normalized_csv)
+    manifest["metrics"] = {"monitor": monitor_metrics}
 
     if args.skip_import:
         manifest["status"] = "success"
@@ -255,7 +295,7 @@ def main() -> int:
             locked_skipped_count=0,
             stale_expired_count=0,
             error_count=0,
-            error_summary={},
+            error_summary={"errors": [], "monitor": monitor_metrics},
             scrapers_succeeded=scraper_successes,
             scrapers_failed=scraper_failures,
         )
@@ -294,7 +334,7 @@ def main() -> int:
         locked_skipped_count=int(importer_summary.get("locked_seen_only", 0)),
         stale_expired_count=int(importer_summary.get("inactivated", 0)),
         error_count=int(importer_summary.get("errors", 0)) + len(errors),
-        error_summary={"errors": errors},
+        error_summary={"errors": errors, "monitor": monitor_metrics},
         scrapers_succeeded=scraper_successes,
         scrapers_failed=scraper_failures,
     )
