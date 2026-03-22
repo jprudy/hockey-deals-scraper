@@ -1,5 +1,6 @@
 "use client";
 
+import { filterSubcategoriesForDropdown } from "@/lib/deals/filterOptions";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 type Option = { slug: string; name: string };
@@ -59,10 +60,10 @@ export default function DealsFilters({
   const currentMaxPrice = searchParams.get("maxPrice") ?? "";
   const currentSort = searchParams.get("sort") ?? "newest";
 
-  const visibleSubcategories = subcategories.filter((sc) => {
-    if (!currentCategory) return true;
-    return sc.categorySlug === currentCategory;
-  });
+  const visibleSubcategories = filterSubcategoriesForDropdown(
+    subcategories,
+    currentCategory,
+  );
 
   function pushQuery(
     updates: Record<string, string | null | undefined>

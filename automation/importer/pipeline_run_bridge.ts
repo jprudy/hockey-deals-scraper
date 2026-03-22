@@ -1,3 +1,5 @@
+import type { Prisma, PrismaClient } from "../../src/generated/prisma/client";
+import type { IntakeType, PipelineRunStatus } from "../../src/generated/prisma/enums";
 import { createPrismaClient } from "./prisma_client";
 
 function argValue(flag: string): string | undefined {
@@ -8,7 +10,7 @@ function argValue(flag: string): string | undefined {
 
 type Payload = Record<string, unknown>;
 
-function asStatus(value: unknown): string {
+function asStatus(value: unknown): PipelineRunStatus {
   const text = String(value || "").toUpperCase();
   if (text === "RUNNING") return "RUNNING";
   if (text === "SUCCESS") return "SUCCESS";
@@ -16,7 +18,7 @@ function asStatus(value: unknown): string {
   return "FAILED";
 }
 
-function asIntakeType(value: unknown): string {
+function asIntakeType(value: unknown): IntakeType {
   const text = String(value || "").toUpperCase();
   if (text === "MANUAL") return "MANUAL";
   if (text === "API") return "API";
@@ -34,13 +36,13 @@ async function startRun(prisma: PrismaClient, payload: Payload): Promise<void> {
     where: { runId },
     create: {
       runId,
-      status: "RUNNING" as any,
+      status: "RUNNING",
       startedAt,
       intakeTypesUsed: [intakeType.toLowerCase()],
       scrapersTotal,
     },
     update: {
-      status: "RUNNING" as any,
+      status: "RUNNING",
       startedAt,
       intakeTypesUsed: [intakeType.toLowerCase()],
       scrapersTotal,
@@ -53,18 +55,18 @@ async function startRun(prisma: PrismaClient, payload: Payload): Promise<void> {
     where: {
       pipelineRunId_intakeType_sourceStore: {
         pipelineRunId: run.id,
-        intakeType: intakeType as any,
+        intakeType,
         sourceStore,
       },
     },
     create: {
       pipelineRunId: run.id,
-      intakeType: intakeType as any,
+      intakeType,
       sourceStore,
-      status: "RUNNING" as any,
+      status: "RUNNING",
     },
     update: {
-      status: "RUNNING" as any,
+      status: "RUNNING",
     },
   });
 }
@@ -81,13 +83,13 @@ async function updateIntakeJob(prisma: PrismaClient, payload: Payload): Promise<
     where: {
       pipelineRunId_intakeType_sourceStore: {
         pipelineRunId: run.id,
-        intakeType: intakeType as any,
+        intakeType,
         sourceStore,
       },
     },
     create: {
       pipelineRunId: run.id,
-      intakeType: intakeType as any,
+      intakeType,
       sourceStore,
       status,
       rowsProduced: Number(payload.rowsProduced ?? 0),
@@ -126,7 +128,10 @@ async function finalizeRun(prisma: PrismaClient, payload: Payload): Promise<void
       lockedSkippedCount: Number(payload.lockedSkippedCount ?? 0),
       staleExpiredCount: Number(payload.staleExpiredCount ?? 0),
       errorCount: Number(payload.errorCount ?? 0),
-      errorSummary: payload.errorSummary ?? null,
+      errorSummary:
+        payload.errorSummary === undefined || payload.errorSummary === null
+          ? undefined
+          : (payload.errorSummary as Prisma.InputJsonValue),
     },
   });
 }

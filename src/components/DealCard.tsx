@@ -6,7 +6,7 @@ import type { Deal } from "@/lib/deals/types";
 import { formatPriceCents } from "@/lib/money";
 
 function isValidPriceCents(value: number | undefined): value is number {
-  return Number.isFinite(value) && value > 0;
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
 export default function DealCard({ deal }: { deal: Deal }) {
@@ -19,8 +19,12 @@ export default function DealCard({ deal }: { deal: Deal }) {
       ? deal.priceCents
       : undefined;
 
+  const originalCents = deal.originalPriceCents;
   const showOriginalStrikethrough =
-    hasOriginalPrice && visiblePrice != null && deal.originalPriceCents > visiblePrice;
+    hasOriginalPrice &&
+    visiblePrice != null &&
+    originalCents != null &&
+    originalCents > visiblePrice;
   const showDiscountBadge =
     typeof deal.discountPercent === "number" && deal.discountPercent > 0;
   const hasImage = typeof deal.imageUrl === "string" && deal.imageUrl.trim().length > 0;
@@ -73,7 +77,7 @@ export default function DealCard({ deal }: { deal: Deal }) {
 
         {showOriginalStrikethrough ? (
           <div className="whitespace-nowrap text-sm text-black/50 line-through">
-            {formatPriceCents(deal.originalPriceCents)}
+            {formatPriceCents(originalCents)}
           </div>
         ) : null}
       </div>

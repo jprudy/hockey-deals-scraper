@@ -2,6 +2,11 @@ import "dotenv/config";
 import { getPrisma } from "../src/lib/prisma";
 import type { Prisma } from "../src/generated/prisma/client";
 
+function seedSkipDemoDeals(): boolean {
+  const v = (process.env.SEED_SKIP_DEMO_DEALS || "").toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
 async function main() {
   const prisma = getPrisma();
 
@@ -274,63 +279,69 @@ async function main() {
     },
   ];
 
-  for (const deal of deals) {
-    await prisma.deal.upsert({
-      where: { slug: deal.slug },
-      update: {
-        title: deal.title,
-        description: deal.description,
-        imageUrl: deal.imageUrl,
-        originalPriceCents: deal.originalPriceCents,
-        salePriceCents: deal.salePriceCents,
-        discountPercent: deal.discountPercent,
-        size: deal.size,
-        stockStatus: deal.stockStatus,
-        shippingText: deal.shippingText,
-        affiliateUrl: deal.affiliateUrl,
-        affiliateUrlWithUtm: deal.affiliateUrlWithUtm,
-        retailerUrl: deal.retailerUrl,
-        isFeatured: deal.isFeatured,
-        keepFlag: deal.keepFlag,
-        status: deal.status,
-        lastSeenAt: deal.lastSeenAt,
-        promotionStartAt: deal.promotionStartAt,
-        promotionEndAt: deal.promotionEndAt,
-        sourceType: deal.sourceType,
-        rawData: deal.rawData,
-        retailerId: deal.retailerId,
-        brandId: deal.brandId,
-        categoryId: deal.categoryId,
-        subcategoryId: deal.subcategoryId,
-      },
-      create: {
-        slug: deal.slug,
-        title: deal.title,
-        description: deal.description,
-        imageUrl: deal.imageUrl,
-        originalPriceCents: deal.originalPriceCents,
-        salePriceCents: deal.salePriceCents,
-        discountPercent: deal.discountPercent,
-        size: deal.size,
-        stockStatus: deal.stockStatus,
-        shippingText: deal.shippingText,
-        affiliateUrl: deal.affiliateUrl,
-        affiliateUrlWithUtm: deal.affiliateUrlWithUtm,
-        retailerUrl: deal.retailerUrl,
-        isFeatured: deal.isFeatured,
-        keepFlag: deal.keepFlag,
-        status: deal.status,
-        lastSeenAt: deal.lastSeenAt,
-        promotionStartAt: deal.promotionStartAt,
-        promotionEndAt: deal.promotionEndAt,
-        sourceType: deal.sourceType,
-        rawData: deal.rawData,
-        retailerId: deal.retailerId,
-        brandId: deal.brandId,
-        categoryId: deal.categoryId,
-        subcategoryId: deal.subcategoryId,
-      },
-    });
+  if (seedSkipDemoDeals()) {
+    console.log(
+      "[seed] SEED_SKIP_DEMO_DEALS is set — skipping demo deal upserts (taxonomy seed still runs).",
+    );
+  } else {
+    for (const deal of deals) {
+      await prisma.deal.upsert({
+        where: { slug: deal.slug },
+        update: {
+          title: deal.title,
+          description: deal.description,
+          imageUrl: deal.imageUrl,
+          originalPriceCents: deal.originalPriceCents,
+          salePriceCents: deal.salePriceCents,
+          discountPercent: deal.discountPercent,
+          size: deal.size,
+          stockStatus: deal.stockStatus,
+          shippingText: deal.shippingText,
+          affiliateUrl: deal.affiliateUrl,
+          affiliateUrlWithUtm: deal.affiliateUrlWithUtm,
+          retailerUrl: deal.retailerUrl,
+          isFeatured: deal.isFeatured,
+          keepFlag: deal.keepFlag,
+          status: deal.status,
+          lastSeenAt: deal.lastSeenAt,
+          promotionStartAt: deal.promotionStartAt,
+          promotionEndAt: deal.promotionEndAt,
+          sourceType: deal.sourceType,
+          rawData: deal.rawData,
+          retailerId: deal.retailerId,
+          brandId: deal.brandId,
+          categoryId: deal.categoryId,
+          subcategoryId: deal.subcategoryId,
+        },
+        create: {
+          slug: deal.slug,
+          title: deal.title,
+          description: deal.description,
+          imageUrl: deal.imageUrl,
+          originalPriceCents: deal.originalPriceCents,
+          salePriceCents: deal.salePriceCents,
+          discountPercent: deal.discountPercent,
+          size: deal.size,
+          stockStatus: deal.stockStatus,
+          shippingText: deal.shippingText,
+          affiliateUrl: deal.affiliateUrl,
+          affiliateUrlWithUtm: deal.affiliateUrlWithUtm,
+          retailerUrl: deal.retailerUrl,
+          isFeatured: deal.isFeatured,
+          keepFlag: deal.keepFlag,
+          status: deal.status,
+          lastSeenAt: deal.lastSeenAt,
+          promotionStartAt: deal.promotionStartAt,
+          promotionEndAt: deal.promotionEndAt,
+          sourceType: deal.sourceType,
+          rawData: deal.rawData,
+          retailerId: deal.retailerId,
+          brandId: deal.brandId,
+          categoryId: deal.categoryId,
+          subcategoryId: deal.subcategoryId,
+        },
+      });
+    }
   }
 
   await prisma.$disconnect();

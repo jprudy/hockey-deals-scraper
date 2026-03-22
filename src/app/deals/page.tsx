@@ -2,6 +2,7 @@ import DealCard from "@/components/DealCard";
 import DealsFilters from "@/components/DealsFilters";
 import { getDeals } from "@/lib/deals";
 import { getPrisma } from "@/lib/prisma";
+import { sortBrandsForFilterUi } from "@/lib/deals/filterOptions";
 import { parseDealsFilters } from "@/lib/deals/dealFilters";
 import { Suspense } from "react";
 import { unstable_noStore as noStore } from "next/cache";
@@ -63,6 +64,8 @@ export default async function DealsPage({
     categoryName: sc.category.name,
   }));
 
+  const brandsSorted = sortBrandsForFilterUi(brands);
+
   const {
     deals,
     totalCount,
@@ -106,7 +109,7 @@ export default async function DealsPage({
           <DealsFilters
             categories={categories}
             subcategories={subcategoryOptions}
-            brands={brands}
+            brands={brandsSorted}
             retailers={retailers}
           />
         </Suspense>

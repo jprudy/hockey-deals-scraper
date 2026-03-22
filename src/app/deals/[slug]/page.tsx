@@ -1,19 +1,19 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { formatPriceCents } from "@/lib/money";
-import { getDealBySlug, getDealSlugs } from "@/lib/deals";
+import { getDealBySlug } from "@/lib/deals";
 
-export async function generateStaticParams() {
-  const slugs = await getDealSlugs();
-  return slugs.map((slug) => ({ slug }));
-}
+// DB-driven slugs can contain ":" etc.; pre-rendering all paths breaks on Windows
+// and is unnecessary for this app. Render on demand.
+export const dynamic = "force-dynamic";
 
 export default async function DealPage({
   params,
 }: {
-  params: { slug: string };
+  params: Promise<{ slug: string }> | { slug: string };
 }) {
-  const deal = await getDealBySlug(params.slug);
+  const { slug } = await Promise.resolve(params);
+  const deal = await getDealBySlug(slug);
 
   if (!deal) notFound();
 
