@@ -18,6 +18,35 @@ async function main() {
     },
   });
 
+  // Production scraper stores (importer also upserts these; seed keeps local/dev aligned).
+  await prisma.retailer.upsert({
+    where: { slug: "thehockeyshop" },
+    update: {},
+    create: {
+      slug: "thehockeyshop",
+      name: "The Hockey Shop",
+      websiteUrl: "https://www.thehockeyshop.com",
+    },
+  });
+  await prisma.retailer.upsert({
+    where: { slug: "sourceforsports" },
+    update: {},
+    create: {
+      slug: "sourceforsports",
+      name: "Source for Sports",
+      websiteUrl: null,
+    },
+  });
+  await prisma.retailer.upsert({
+    where: { slug: "sportexcellence" },
+    update: {},
+    create: {
+      slug: "sportexcellence",
+      name: "Sport Excellence",
+      websiteUrl: null,
+    },
+  });
+
   const bauer = await prisma.brand.upsert({
     where: { slug: "bauer" },
     update: {},

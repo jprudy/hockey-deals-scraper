@@ -6,6 +6,9 @@ node_modules/
 __pycache__/
 *.pyc
 
+# TypeScript build info
+tsconfig.tsbuildinfo
+
 # Logs & outputs
 automation/logs/
 automation/output/

@@ -86,6 +86,34 @@ def build_monitor_metrics(
     }
 
 
+def build_run_diagnostics(
+    scraper_results: List[Dict[str, Any]],
+    monitor_metrics: Dict[str, Any],
+    importer_summary: Dict[str, Any],
+    warning_flags: List[str],
+    pipeline_completed: bool,
+) -> Dict[str, Any]:
+    return {
+        "pipeline_completed": pipeline_completed,
+        "scrapers": scraper_results,
+        "dedupe": {
+            "rows_before": int(monitor_metrics.get("rows_before_dedupe", 0)),
+            "rows_after": int(monitor_metrics.get("rows_after_dedupe", 0)),
+            "rows_removed": int(monitor_metrics.get("rows_removed_by_dedupe", 0)),
+            "dedupe_pct": float(monitor_metrics.get("dedupe_pct", 0.0)),
+        },
+        "per_source_before_dedupe": monitor_metrics.get("per_source_before_dedupe", {}),
+        "per_source_after_dedupe": monitor_metrics.get("per_source_after_dedupe", {}),
+        "importer_activity": {
+            "rows_read": int(importer_summary.get("rows_read", 0)),
+            "inserted": int(importer_summary.get("inserted", 0)),
+            "updated": int(importer_summary.get("updated_unlocked", 0)),
+            "errors": int(importer_summary.get("errors", 0)),
+        },
+        "warning_flags": warning_flags,
+    }
+
+
 SCRAPERS: List[ScraperDefinition] = [
     ScraperDefinition(name="thehockeyshop", run=run_thehockeyshop),
     ScraperDefinition(name="sourceforsports", run=run_sourceforsports),
@@ -215,6 +243,8 @@ def main() -> int:
     all_rows: List[Dict[str, str]] = []
     scraper_successes = 0
     scraper_failures = 0
+    warning_flags: List[str] = []
+    scraper_diagnostics: List[Dict[str, Any]] = []
     for scraper in SCRAPERS:
         rows, meta = run_scraper_with_retry(scraper=scraper, run_id=run_id, run_dir=run_dir, log_dir=log_dir)
         scraper_status = str(meta.get("status", "failed"))
@@ -225,13 +255,30 @@ def main() -> int:
         )
         if int(meta.get("rows_filtered", 0)) > 0:
             log_event(f"warning scraper={scraper.name} rows_filtered={int(meta.get('rows_filtered', 0))}")
+            warning_flags.append(f"{scraper.name}_rows_filtered")
+        if scraper_status == "success" and len(rows) == 0:
+            log_event(f"warning scraper={scraper.name} returned_zero_rows_after_cleaning")
+            warning_flags.append(f"{scraper.name}_zero_rows")
         manifest["intake_jobs"][f"{IMPORT_SOURCE}:{source_store}"] = meta
+        scraper_diagnostics.append(
+            {
+                "name": scraper.name,
+                "source": source_store,
+                "status": scraper_status,
+                "rows": len(rows),
+                "attempts": int(meta.get("attempt", 1)),
+                "duration_ms": int(meta.get("duration_ms", 0)),
+                "rows_filtered": int(meta.get("rows_filtered", 0)),
+                "invalid_rows": int(meta.get("invalid_rows", 0)),
+            }
+        )
         if scraper_status == "success":
             scraper_successes += 1
             all_rows.extend(rows)
         else:
             scraper_failures += 1
             errors.append(f"{scraper.name}_scraper_failed")
+            warning_flags.append(f"{scraper.name}_failed")
 
         safe_run_history_call(
             "update_intake_job",
@@ -257,6 +304,7 @@ def main() -> int:
 
     if not deduped_rows:
         log_event("warning all scrapers produced zero accepted rows")
+        warning_flags.append("all_scrapers_zero_rows")
 
     normalized_csv = run_dir / "normalized" / "deals_scraped_all_sources.csv"
     normalized_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -276,10 +324,35 @@ def main() -> int:
     )
     manifest["artifacts"]["normalized_csv"] = str(normalized_csv)
     manifest["metrics"] = {"monitor": monitor_metrics}
+    log_event(
+        "final_summary_scrapers "
+        + " ".join(
+            [
+                f"{entry['name']}[status={entry['status']},rows={entry['rows']},attempts={entry['attempts']},duration_ms={entry['duration_ms']}]"
+                for entry in scraper_diagnostics
+            ]
+        )
+    )
+    log_event(
+        "final_summary_dedupe "
+        f"rows_before={int(monitor_metrics.get('rows_before_dedupe', 0))} "
+        f"rows_after={int(monitor_metrics.get('rows_after_dedupe', 0))} "
+        f"rows_removed={int(monitor_metrics.get('rows_removed_by_dedupe', 0))} "
+        f"dedupe_pct={float(monitor_metrics.get('dedupe_pct', 0.0)):.2f}% "
+        f"per_source_before={json.dumps(monitor_metrics.get('per_source_before_dedupe', {}), sort_keys=True)} "
+        f"per_source_after={json.dumps(monitor_metrics.get('per_source_after_dedupe', {}), sort_keys=True)}"
+    )
 
     if args.skip_import:
         manifest["status"] = "success"
         manifest["importer"] = {"status": "skipped"}
+        manifest["diagnostics"] = build_run_diagnostics(
+            scraper_results=scraper_diagnostics,
+            monitor_metrics=monitor_metrics,
+            importer_summary={},
+            warning_flags=warning_flags,
+            pipeline_completed=True,
+        )
         manifest["ended_at"] = utc_now().replace(microsecond=0).isoformat()
         write_json(manifest_path, manifest)
         safe_run_history_call(
@@ -295,7 +368,12 @@ def main() -> int:
             locked_skipped_count=0,
             stale_expired_count=0,
             error_count=0,
-            error_summary={"errors": [], "monitor": monitor_metrics},
+            error_summary={
+                "errors": [],
+                "monitor": monitor_metrics,
+                "warningFlags": warning_flags,
+                "pipelineCompleted": True,
+            },
             scrapers_succeeded=scraper_successes,
             scrapers_failed=scraper_failures,
         )
@@ -311,10 +389,17 @@ def main() -> int:
     manifest["status"] = "success" if importer["status"] == "success" else "failed"
     if importer["status"] != "success":
         errors.append("importer_failed")
-    manifest["ended_at"] = utc_now().replace(microsecond=0).isoformat()
-    write_json(manifest_path, manifest)
-
+        warning_flags.append("importer_failed")
     importer_summary = importer.get("summary", {}) if isinstance(importer.get("summary"), dict) else {}
+    manifest["ended_at"] = utc_now().replace(microsecond=0).isoformat()
+    manifest["diagnostics"] = build_run_diagnostics(
+        scraper_results=scraper_diagnostics,
+        monitor_metrics=monitor_metrics,
+        importer_summary=importer_summary,
+        warning_flags=warning_flags,
+        pipeline_completed=True,
+    )
+    write_json(manifest_path, manifest)
     safe_run_history_call(
         "finalize_run_success_or_failed",
         finalize_run,
@@ -334,7 +419,13 @@ def main() -> int:
         locked_skipped_count=int(importer_summary.get("locked_seen_only", 0)),
         stale_expired_count=int(importer_summary.get("inactivated", 0)),
         error_count=int(importer_summary.get("errors", 0)) + len(errors),
-        error_summary={"errors": errors, "monitor": monitor_metrics},
+        error_summary={
+            "errors": errors,
+            "monitor": monitor_metrics,
+            "warningFlags": warning_flags,
+            "pipelineCompleted": True,
+            "diagnostics": manifest.get("diagnostics", {}),
+        },
         scrapers_succeeded=scraper_successes,
         scrapers_failed=scraper_failures,
     )
@@ -345,6 +436,14 @@ def main() -> int:
         f"inserted={int(importer_summary.get('inserted', 0))} "
         f"updated={int(importer_summary.get('updated_unlocked', 0))} "
         f"errors={int(importer_summary.get('errors', 0)) + len(errors)}"
+    )
+    log_event(
+        "final_summary_importer "
+        f"rows_read={int(importer_summary.get('rows_read', 0))} "
+        f"inserted={int(importer_summary.get('inserted', 0))} "
+        f"updated={int(importer_summary.get('updated_unlocked', 0))} "
+        f"errors={int(importer_summary.get('errors', 0))} "
+        f"warning_flags={json.dumps(warning_flags)}"
     )
 
     return 0 if manifest["status"] == "success" else 1

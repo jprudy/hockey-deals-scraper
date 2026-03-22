@@ -23,6 +23,10 @@ CSV_HEADERS: List[str] = [
     "stock_text",
     "image_url",
     "description",
+    "brand",
+    "category",
+    "subcategory",
+    "size",
 ]
 
 REQUIRED_FIELDS: List[str] = [
@@ -43,6 +47,29 @@ SOURCE_STORE = "thehockeyshop"
 IMPORT_SOURCE = "scraped"
 
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid"}
+
+
+def sanitize_wp_text(value: object) -> str:
+    """
+    Remove characters that often break imports / UIs (aligned with legacy WP-safe merge):
+    BOM, NBSP, narrow/no-break spaces, zero-width chars, CR/LF/TAB.
+    """
+    if value is None:
+        return ""
+    s = str(value)
+    return (
+        s.replace("\ufeff", "")
+        .replace("\u00a0", " ")
+        .replace("\u202f", " ")
+        .replace("\u2007", " ")
+        .replace("\u200b", "")
+        .replace("\u200c", "")
+        .replace("\u200d", "")
+        .replace("\r", " ")
+        .replace("\n", " ")
+        .replace("\t", " ")
+        .strip()
+    )
 
 
 @dataclass
@@ -77,7 +104,7 @@ def parse_decimal(value: str) -> Optional[Decimal]:
 
 def validate_and_normalize_row(raw: Dict[str, str], run_id: str) -> ValidationResult:
     mapped_raw = map_source_row(raw)
-    row = {key: str(mapped_raw.get(key, "")).strip() for key in CSV_HEADERS}
+    row = {key: sanitize_wp_text(mapped_raw.get(key, "")) for key in CSV_HEADERS}
     errors: List[str] = []
 
     row["run_id"] = run_id
@@ -136,52 +163,67 @@ def map_source_row(raw: Dict[str, str]) -> Dict[str, str]:
     Maps known source formats (including THS legacy CSV) into normalized keys.
     """
     if "ProductName" in raw or "DealURL" in raw or "OriginalPrice" in raw:
-        stock = str(raw.get("Stock", "")).strip().lower()
-        in_stock = "true" if "in stock" in stock or stock == "true" else "false"
+        stock_text = sanitize_wp_text(raw.get("Stock", ""))
+        stock_lower = stock_text.lower()
+        in_stock = "true" if "in stock" in stock_lower or stock_lower == "true" else "false"
+        title = sanitize_wp_text(raw.get("ProductName", ""))
+        desc = sanitize_wp_text(raw.get("Description", "")) or title
         return {
-            "run_id": str(raw.get("run_id", "")).strip(),
-            "scraped_at": str(raw.get("scraped_at", "")).strip(),
+            "run_id": sanitize_wp_text(raw.get("run_id", "")),
+            "scraped_at": sanitize_wp_text(raw.get("scraped_at", "")),
             "import_source": "scraped",
             "source": "ths",
-            "external_key": str(raw.get("external_key", "")).strip(),
+            "external_key": sanitize_wp_text(raw.get("external_key", "")),
             "source_store": "thehockeyshop",
-            "source_url": str(raw.get("DealURL", "")).strip(),
-            "source_product_id": str(raw.get("ID", "")).strip(),
-            "title": str(raw.get("ProductName", "")).strip(),
-            "price": str(raw.get("OriginalPrice", "")).strip(),
-            "sale_price": str(raw.get("SalePrice", "")).strip(),
+            "source_url": sanitize_wp_text(raw.get("DealURL", "")),
+            "source_product_id": sanitize_wp_text(raw.get("ID", "")),
+            "title": title,
+            "price": sanitize_wp_text(raw.get("OriginalPrice", "")),
+            "sale_price": sanitize_wp_text(raw.get("SalePrice", "")),
             "currency": "CAD",
             "in_stock": in_stock,
-            "stock_text": str(raw.get("Stock", "")).strip(),
-            "image_url": str(raw.get("ImageURL", "")).strip(),
-            "description": str(raw.get("Description", "")).strip()
-            or str(raw.get("ProductName", "")).strip(),
+            "stock_text": stock_text,
+            "image_url": sanitize_wp_text(raw.get("ImageURL", "")),
+            "description": desc,
+            "brand": sanitize_wp_text(raw.get("Brand", "")),
+            "category": sanitize_wp_text(raw.get("Category", "")),
+            "subcategory": sanitize_wp_text(raw.get("Subcategory", "")),
+            "size": sanitize_wp_text(raw.get("Size", "")),
         }
 
     if "product_name" in raw or "url" in raw:
-        source = str(raw.get("source", "")).strip() or str(raw.get("source_store", "")).strip()
-        source_store = str(raw.get("source_store", "")).strip() or source
+        source = sanitize_wp_text(raw.get("source", "")) or sanitize_wp_text(raw.get("source_store", ""))
+        source_store = sanitize_wp_text(raw.get("source_store", "")) or source
+        product_name = sanitize_wp_text(raw.get("product_name", ""))
+        price_reg = sanitize_wp_text(raw.get("original_price", "")) or sanitize_wp_text(raw.get("price", ""))
+        sale = sanitize_wp_text(raw.get("price", ""))
+        desc = sanitize_wp_text(raw.get("description", "")) or product_name
         return {
-            "run_id": str(raw.get("run_id", "")).strip(),
-            "scraped_at": str(raw.get("scraped_at", "")).strip(),
+            "run_id": sanitize_wp_text(raw.get("run_id", "")),
+            "scraped_at": sanitize_wp_text(raw.get("scraped_at", "")),
             "import_source": "scraped",
             "source": source,
-            "external_key": str(raw.get("external_key", "")).strip(),
+            "external_key": sanitize_wp_text(raw.get("external_key", "")),
             "source_store": source_store,
-            "source_url": str(raw.get("url", "")).strip(),
-            "source_product_id": str(raw.get("source_product_id", "")).strip(),
-            "title": str(raw.get("product_name", "")).strip(),
+            "source_url": sanitize_wp_text(raw.get("url", "")),
+            "source_product_id": sanitize_wp_text(raw.get("source_product_id", "")),
+            "title": product_name,
             # Internal normalized format expects price=regular and sale_price=current sale.
-            "price": str(raw.get("original_price", "")).strip() or str(raw.get("price", "")).strip(),
-            "sale_price": str(raw.get("price", "")).strip(),
+            "price": price_reg,
+            "sale_price": sale,
             "currency": "CAD",
-            "in_stock": str(raw.get("in_stock", "")).strip(),
-            "stock_text": str(raw.get("stock_text", "")).strip(),
-            "image_url": str(raw.get("image_url", "")).strip(),
-            "description": str(raw.get("description", "")).strip() or str(raw.get("product_name", "")).strip(),
+            "in_stock": sanitize_wp_text(raw.get("in_stock", "")),
+            "stock_text": sanitize_wp_text(raw.get("stock_text", "")),
+            "image_url": sanitize_wp_text(raw.get("image_url", "")),
+            "description": desc,
+            "brand": sanitize_wp_text(raw.get("brand", "")) or sanitize_wp_text(raw.get("Brand", "")),
+            "category": sanitize_wp_text(raw.get("category", "")) or sanitize_wp_text(raw.get("Category", "")),
+            "subcategory": sanitize_wp_text(raw.get("subcategory", ""))
+            or sanitize_wp_text(raw.get("Subcategory", "")),
+            "size": sanitize_wp_text(raw.get("size", "")) or sanitize_wp_text(raw.get("Size", "")),
         }
 
-    return raw
+    return {k: sanitize_wp_text(v) if isinstance(v, str) else v for k, v in raw.items()}
 
 
 def canonicalize_url(raw_url: str) -> str:

@@ -661,6 +661,7 @@ def extract_list(page, base_url, json_cache: dict | None = None, links: set[str]
         "skip_out_of_stock": 0,
         "skip_nonhockey": 0,
         "skip_no_title": 0,
+        "pdp_price_fallback": 0,
     }
     rows = []
     for idx, deal in enumerate(sorted(links)[:MAX_PRODUCTS], start=1):
@@ -744,7 +745,32 @@ def extract_list(page, base_url, json_cache: dict | None = None, links: set[str]
                 sale, reg = nums[0], nums[-1]
 
         # ensure genuine deal
-        if not (sale and reg and sale < reg and (reg - sale) >= MIN_ABS_DISCOUNT_CAD and ((reg - sale) / reg * 100) >= MIN_DISCOUNT_PCT):
+        if not (
+            sale
+            and reg
+            and sale < reg
+            and (reg - sale) >= MIN_ABS_DISCOUNT_CAD
+            and ((reg - sale) / reg * 100) >= MIN_DISCOUNT_PCT
+        ):
+            # Grid tile often missing after crawl_pages_numbered (browser left on page N).
+            if container is None:
+                p_sale, p_reg = try_pdp_prices(page, deal)
+                if (
+                    p_sale is not None
+                    and p_reg is not None
+                    and p_sale < p_reg
+                    and (p_reg - p_sale) >= MIN_ABS_DISCOUNT_CAD
+                    and ((p_reg - p_sale) / p_reg * 100) >= MIN_DISCOUNT_PCT
+                ):
+                    sale, reg = p_sale, p_reg
+                    counters["pdp_price_fallback"] += 1
+        if not (
+            sale
+            and reg
+            and sale < reg
+            and (reg - sale) >= MIN_ABS_DISCOUNT_CAD
+            and ((reg - sale) / reg * 100) >= MIN_DISCOUNT_PCT
+        ):
             counters["skip_no_deal"] += 1
             continue
 
@@ -844,6 +870,7 @@ def extract_list(page, base_url, json_cache: dict | None = None, links: set[str]
     print(
         "[Summary] "
         f"Kept={counters['kept']}  "
+        f"pdp_price_fallback={counters['pdp_price_fallback']}  "
         f"Skip: no_title={counters['skip_no_title']}, newsletter={counters['skip_newsletter']}, "
         f"nonhockey={counters['skip_nonhockey']}, logo={counters['skip_logo']}, "
         f"no_deal={counters['skip_no_deal']}, oos={counters['skip_out_of_stock']}"
@@ -957,6 +984,47 @@ PRICE_AREAS = [
 ]
 
 
+def try_pdp_prices(page, product_url: str) -> tuple[float | None, float | None]:
+    """
+    When collection-grid pricing fails (common after multi-page crawl: `page` is not on
+    the product's listing page), load the PDP briefly and read sale/compare prices.
+    """
+    try:
+        page.goto(product_url, timeout=20000, wait_until="domcontentloaded")
+        rand_wait(0.12, 0.28)
+        dismiss_popups(page)
+        sale_node = (
+            page.query_selector(".Price--highlight")
+            or page.query_selector(".price-item--sale")
+            or page.query_selector(".price__sale .price-item--price")
+            or page.query_selector(".price__sale .price-item--last")
+            or page.query_selector(".price--sale")
+        )
+        reg_node = (
+            page.query_selector(".Price--compareAt")
+            or page.query_selector(".price-item--regular")
+            or page.query_selector(".price__regular .price-item--regular")
+            or page.query_selector(".price--compare")
+            or page.query_selector("s.price-item--regular")
+        )
+        sale = parse_price(get_text(sale_node))
+        reg = parse_price(get_text(reg_node))
+        main = page.query_selector("main, [data-product], .product, #MainContent") or page.query_selector("body")
+        if main:
+            if reg is None:
+                reg = strike_price_in_tree(main, max_levels=4)
+            ptext = price_area_text(main)
+            nums = sorted(set(numbers_near_price_words(ptext)))
+            if len(nums) >= 2 and nums[0] > 0 and nums[0] < nums[-1]:
+                sale = sale if sale is not None else nums[0]
+                reg = reg if reg is not None else nums[-1]
+        if sale is not None and reg is not None and sale < reg:
+            return sale, reg
+    except Exception:
+        pass
+    return None, None
+
+
 def price_area_text(container) -> str:
     if not container:
         return ""
@@ -1026,6 +1094,19 @@ def main() -> None:
                         pass
                     if i % 60 == 0:
                         print(f"    [JSON] prefetched {i}/{len(product_links)}")
+
+            # Pagination leaves `page` on the last ?page=N URL; extract_list uses live DOM for
+            # tiles. Rewind to page 1 so page-1 products resolve in the grid.
+            if all_seen:
+                print("    [Rewind] collection page 1 for grid pricing context")
+                try:
+                    page.goto(url, timeout=50000)
+                    page.wait_for_load_state("domcontentloaded")
+                    rand_wait(0.4, 0.8)
+                    dismiss_popups(page)
+                    human_scroll(page, 6)
+                except PWTimeout:
+                    print("    [Rewind] timeout (continuing with current DOM)")
 
             rows = extract_list(page, url, json_cache if FAST_JSON_SCREEN else None, links=all_seen or None)
             print(f"    Extracted {len(rows)} products")
