@@ -1,12 +1,17 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { createPrismaClient } from "./prisma_client";
+import {
+  createTaxonomyCaches,
+  resolveDealTaxonomy,
+  TaxonomyReviewBuffer,
+  type TaxonomyRow,
+} from "./taxonomy_resolve";
 
-type Row = {
+type Row = TaxonomyRow & {
   run_id: string;
   scraped_at: string;
   import_source: string;
-  source?: string;
   external_key: string;
   source_store: string;
   source_url: string;
@@ -30,6 +35,7 @@ type Summary = {
   stale_incremented: number;
   inactivated: number;
   errors: number;
+  taxonomy_review?: { path: string; issue_count: number };
 };
 
 function argValue(flag: string): string | undefined {
@@ -60,6 +66,7 @@ async function main(): Promise<number> {
   const runId = argValue("--run-id");
   const staleThresholdArg = argValue("--stale-threshold") ?? "2";
   const summaryArg = argValue("--summary");
+  const taxonomyReviewArg = argValue("--taxonomy-review");
 
   if (!rowsArg || !runId || !summaryArg) {
     console.error("Missing required args --rows --run-id --summary");
@@ -69,6 +76,9 @@ async function main(): Promise<number> {
   const staleThreshold = Number(staleThresholdArg);
   const rowsPath = resolve(rowsArg);
   const summaryPath = resolve(summaryArg);
+  const taxonomyReviewPath = taxonomyReviewArg
+    ? resolve(taxonomyReviewArg)
+    : join(dirname(summaryPath), "taxonomy_review.json");
   const rows = JSON.parse(readFileSync(rowsPath, "utf-8")) as Row[];
   const prisma = createPrismaClient();
   const now = new Date();
@@ -87,11 +97,39 @@ async function main(): Promise<number> {
   const seenKeys = new Set<string>();
   const importSourceScope = rows[0]?.import_source ?? "scraped";
   const seenSourceStores = new Set<string>();
+  const taxonomyCaches = createTaxonomyCaches();
+  const taxonomyReview = new TaxonomyReviewBuffer();
+
+  function writeTaxonomyReviewFile(): void {
+    const issues = taxonomyReview.toArray();
+    writeFileSync(
+      taxonomyReviewPath,
+      JSON.stringify(
+        {
+          run_id: runId,
+          generated_at: new Date().toISOString(),
+          issue_count: issues.length,
+          issues,
+        },
+        null,
+        2,
+      ),
+      "utf-8",
+    );
+    summary.taxonomy_review = {
+      path: taxonomyReviewPath,
+      issue_count: issues.length,
+    };
+  }
 
   try {
     for (const row of rows) {
       seenKeys.add(row.external_key);
-      const sourceStore = row.source || row.source_store;
+      const tax = await resolveDealTaxonomy(prisma, taxonomyCaches, row, {
+        runId,
+        review: taxonomyReview,
+      });
+      const sourceStore = tax.canonicalSourceStore;
       seenSourceStores.add(sourceStore);
       const inStock = String(row.in_stock).toLowerCase() === "true";
       const stockStatus = inStock ? "IN_STOCK" : "OUT_OF_STOCK";
@@ -130,6 +168,11 @@ async function main(): Promise<number> {
             lastCheckedAt: now,
             lastRunId: runId,
             missedRuns: 0,
+            retailerId: tax.retailerId,
+            brandId: tax.brandId,
+            categoryId: tax.categoryId,
+            subcategoryId: tax.subcategoryId,
+            size: tax.size,
           },
         });
         summary.inserted += 1;
@@ -173,6 +216,11 @@ async function main(): Promise<number> {
           lastSeenAt: now,
           lastCheckedAt: now,
           lastRunId: runId,
+          retailerId: tax.retailerId,
+          brandId: tax.brandId,
+          categoryId: tax.categoryId,
+          subcategoryId: tax.subcategoryId,
+          size: tax.size,
         },
       });
       summary.updated_unlocked += 1;
@@ -210,11 +258,17 @@ async function main(): Promise<number> {
   } catch (error) {
     summary.errors += 1;
     console.error(error);
+    try {
+      writeTaxonomyReviewFile();
+    } catch {
+      /* ignore review write failure during error handling */
+    }
     writeFileSync(summaryPath, JSON.stringify(summary, null, 2), "utf-8");
     await prisma.$disconnect();
     return 1;
   }
 
+  writeTaxonomyReviewFile();
   writeFileSync(summaryPath, JSON.stringify(summary, null, 2), "utf-8");
   await prisma.$disconnect();
   return 0;

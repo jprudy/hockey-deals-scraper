@@ -37,6 +37,7 @@ def get_npx_command() -> str:
 
 
 def run_prisma_import(rows_path: Path, run_id: str, summary_path: Path) -> int:
+    taxonomy_review_path = summary_path.parent / "taxonomy_review.json"
     command = [
         get_npx_command(),
         "tsx",
@@ -49,6 +50,8 @@ def run_prisma_import(rows_path: Path, run_id: str, summary_path: Path) -> int:
         "2",
         "--summary",
         str(summary_path),
+        "--taxonomy-review",
+        str(taxonomy_review_path),
     ]
 
     print(f"[import_to_db] running: {' '.join(command)}", flush=True)
